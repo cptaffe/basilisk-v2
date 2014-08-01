@@ -1,0 +1,52 @@
+Basilisk Language Specification
+
+As is the standard I will define Basilisk in EBNF (Extended Backus–Naur Form).
+
+Conventions for the following EBNF are are this:
+
+* repetition-symbol
+- except-symbol
+| definition-separator-symbol
+= defining-symbol
+; terminator-symbol
+
+'  first-quote-symbol            first-quote-symbol  '
+"  second-quote-symbol          second-quote-symbol  "
+/* start-comment-symbol          end-comment-symbol */
+(  start-group-symbol              end-group-symbol  )
+[  start-option-symbol            end-option-symbol  ]
+{  start-repeat-symbol            end-repeat-symbol  }
+?  special-sequence-symbol  special-sequence-symbol  ?
+
+Basilisk EBNF:
+
+char = "'" character "'"; /* 'a' */
+string = '"' {character - '"'} '"'; /* "hello" */
+decimal_number = ['-' | '+'] (decimal_digit - '0') {decimal_digit}; /* 10 */
+octal_number = ['-'| '+'] '0' octal_digit {octal_digit}; /* 023 */
+hexadecimal_number = ['-' | '+'] '0' ('x' | 'X') hexadecimal_digit {hexadecimal_digit}; /* 0x80 */
+number = decimal_number | octal_number | hexadecimal_number;
+symbol = "~" | "!" | "@" | "#" | "$" | "%" | "^" | "&" | "*" | "-" | "+" | "=" ;
+
+octal_digit = '0' ... '7';
+decimal_digit = '0' ... '9';
+hexadecimal_digit = '0' ... '9' | 'A' ... 'F' | 'a' ... 'f';
+
+/* fix later with charset specifics */
+letter = ? letter ? | '_';
+digit = ? digit ?;
+character = ? visible characters ? - '\n';
+whitespace = ? whitespace characters ?;
+newline = '\n';
+
+identifier = letter {letter | digit}; /* _x9 hello_bob */
+operator = identifier | (symbol {symbol});
+argument = identifier | number | char | string;
+
+s-expression = "(" [whitespace] operator {whitespace argument} [whitespace] ")";
+comment = ";" {character} "\n";
+
+program = {s-expression | comment};
+
+/* preprocessor not part of formal langauge */
+preprocessor = '#' identifier {whitespace argument} newline;
