@@ -47,6 +47,3 @@ s-expression = "(" [whitespace] operator {whitespace argument} [whitespace] ")";
 comment = ";" {character} "\n";
 
 program = {s-expression | comment};
-
-/* preprocessor not part of formal langauge */
-preprocessor = '#' identifier {whitespace argument} newline;

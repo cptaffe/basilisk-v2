@@ -2,7 +2,7 @@ CFLAGS=-O2 -Wall
 PREFIX=/usr/local
 
 basilisk:
-	$(CC) main.c -o basilisk
+	$(CC) $(CFLAGS) main.c -o basilisk
 
 install: basilisk
 	install basilisk $(PREFIX)/bin
@@ -10,7 +10,7 @@ install: basilisk
 test: basilisk
 	@./test.sh
 
-redo: clean basilisk test
+redo: clean basilisk
 
 clean:
 	rm -f basilisk

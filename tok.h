@@ -1,26 +1,36 @@
-// token header
-
 typedef struct{
-	char *str;
 	int type;
-	int ch;
-	int len;
-} token;
 
-// terms defined in the Language Spec
+	struct {
+		int ln;
+		int ch;
+	};
+
+	union {
+		/* Number */
+		int n;
+		/* Char */
+		char c;
+		/* String */
+		char *str;
+		/* Identifier | Operator */
+		struct {
+			char *name;
+			void *val;
+		};
+	};
+} Obj;
+
+/* terms defined in the Language Spec */
 enum {
-	BASWHITESPACE,
 	BASCHAR,
 	BASSTRING,
 	BASID,
-	// numbers
-	BASOCTNUM,
-	BASDECNUM,
-	BASHEXNUM,
-	// list
+	/* numbers */
+	BASNUM,
+	/* list */
 	BASBLIST,
 	BASELIST,
-	// operator
+	/* operator */
 	BASOPERATOR,
-	BASCOMMENT,
 };

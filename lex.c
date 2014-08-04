@@ -1,12 +1,15 @@
-// lexes based on the Language Spec
-#import <stdio.h> // getc & ungetc
-#import <stdlib.h> // NULL
-#import <stdarg.h>
+/* lexes based on the Language Spec */
+#import <stdio.h> /* getc & ungetc */
+#import <stdlib.h> /* NULL */
 #import <strings.h>
 #import <ctype.h>
-#import "tok.h" // token enum values
+#import "tok.h" /* token enum values */
+#import "err.h"
+#import "stack.h"
+#import "limits.h"
 
-typedef void (*error) (const char *);
+// lexer error macro
+#define errorf(L, ...) L->error(ERRERROR, L->lineNum, L->charNum, __VA_ARGS__);
 
 typedef struct {
 	FILE *in;
@@ -16,34 +19,20 @@ typedef struct {
 	int charNum;
 	int lineNum;
 	int parenDepth;
-	error error; // error handler
+	errorHandler error; /* error handler */
+	stack *tok;
 } Lexer;
 
-// error interface
-void errorf (Lexer *l, const char *fmt, ...) {
-	va_list ap;
-	char str[100];
-	if (l->error != NULL) {
-		sprintf(str, "\033[1m%d:%d: \033[31merror:\033[0m ", l->lineNum, l->charNum);
-		strcat(str, fmt);
-		va_start(ap, fmt);
-		vsprintf(str, str, ap); va_end(ap);
-		strcat(str, "\n");
-		l->error(str);
-	}
-}
+// definition functions
+static inline int iswhitespace(const char c) {
+	return c == ' ' || c == '\t' || c == '\n';}
+static inline int isletter(const char c) {
+	return isalpha(c) || c == '_';}
+static inline int issymbol(const char c) {
+	return strchr("~!@#$%^&*-+=", c) != NULL;}
 
-// debug
-void debug(const char *fmt, ...){
-	/*va_list ap;
-	char str[100];
-	va_start(ap, fmt);
-	vsprintf(str, fmt, ap); va_end(ap);
-	printf("\033[1m\033[34mdebug:\033[0m %s\n", str);*/
-}
-
-// character stuffs
-char next(Lexer *l) {
+/* character stuffs */
+static char next(Lexer *l) {
 	l->charNum++;
 	char c = getc(l->in);
 	if (c == '\n'){l->lineNum++; l->charNum = 0;}
@@ -51,47 +40,22 @@ char next(Lexer *l) {
 	return l->str[l->len++] = c;
 }
 
-int backup(Lexer *l) {
+static int backup(Lexer *l) {
 	l->len--; l->charNum--;
 	if (l->str[l->len] == '\n'){l->lineNum--;}
 	return ungetc(l->str[l->len], l->in);
 }
 
-void emit(Lexer *l, int type){
-	if (l->len > 0){
-		char s[100]; strlcpy(s, l->str, l->len + 1);
-		l->len = 0;
-		//printf("\033[1m\033[36memit:\033[0m %d: %s\n", type, s);
-	}
-}
-
-void dump(Lexer *l) {
+static void emit(Lexer *l, Obj *tok){
 	l->len = 0;
+	tok->ln = l->lineNum;
+	tok->ch = l->charNum;
+	push(l->tok, tok);
 }
 
-// defines whitespace
-int iswhitespace(const char c) {
-	return c == ' ' || c == '\t' || c == '\n';
-}
+static inline void dump(Lexer *l) {l->len = 0;}
 
-// defines letter
-int isletter(const char c) {
-	return isalpha(c) || c == '_';
-}
-
-// defines symbol
-int issymbol(const char c) {
-	const char symb[] = "~!@#$%^&*-+=";
-	for (int i = 0; i < (sizeof symb)/sizeof (char); i++) {
-		if (c == symb[i]) {return 1;}
-	}
-	return 0;
-}
-
-// function signature
 typedef void *(*lexFunc) (Lexer *);
-
-// lexers only avaliable in this file
 
 static void *lexSexp (Lexer *l);
 static void *lexOperator (Lexer *l);
@@ -105,23 +69,26 @@ static void *lexHexadecimalNumber (Lexer *l);
 static void *lexComment (Lexer *l);
 
 static void *lexProgram (Lexer *l) {
-	debug("lexing program");
 	char c;
 	while ((c = next(l)) != EOF) {
 		if (c == '('){
-			emit(l, BASBLIST);
+			Obj *tok = malloc(sizeof (Obj));
+			tok->type = BASBLIST;
+			emit(l, tok);
 			l->parenDepth++;
 			return lexOperator;
 		} else if (c == ')') {
-			emit(l, BASELIST);
+			Obj *tok = malloc(sizeof (Obj));
+			tok->type = BASELIST;
+			emit(l, tok);
 			l->parenDepth--;
 			if (l->parenDepth < 0){
 				errorf(l, "too many parens");
 				l->parenDepth = 0;
 			}
+			if (l->parenDepth == 0){return lexProgram;}
 			return lexProgram;
 		} else if (iswhitespace(c)) {
-			emit(l, BASWHITESPACE);
 			return lexProgram;
 		} else if (c == ';') {
 			return lexComment;
@@ -134,11 +101,9 @@ static void *lexProgram (Lexer *l) {
 }
 
 static void *lexSexp (Lexer *l) {
-	debug("lexing s-expression");
 	char c;
 	while ((c = next(l)) != EOF) {
 		if (isletter(c) || issymbol(c)) {
-			// first char is letter
 			return lexIdent;
 		} else if (isdigit(c)) {
 			backup(l);
@@ -147,11 +112,13 @@ static void *lexSexp (Lexer *l) {
 			backup(l);
 			return lexProgram;
 		} else if (c == '"') {
+			dump(l);
 			return lexString;
 		} else if (c == '\'') {
+			dump(l);
 			return lexChar;
 		} else if (isspace(c)) {
-			emit(l, BASWHITESPACE);
+			dump(l);
 			return lexSexp;
 		} else {
 			errorf(l, "unknown character '%c'", c);
@@ -162,13 +129,22 @@ static void *lexSexp (Lexer *l) {
 }
 
 static void *lexIdent (Lexer *l) {
-	debug("lexing identifier");
 	char c;
 	while ((c = next(l)) != EOF) {
-		// eat identifier
+		/* eat identifier */
 		if (!isletter(c) && !isdigit(c)) {
 			backup(l);
-			emit(l, BASID);
+			if (!iswhitespace(c)){
+				errorf(l, "unknown character in id '%c'", c);
+				while (!iswhitespace(c = next(l)) && c != EOF){}
+				backup(l); dump(l);
+			} else {
+				Obj *tok = malloc(sizeof (Obj));
+				tok->type = BASID;
+				tok->name = calloc(l->len + 1, sizeof (char));
+				strlcpy(tok->name, l->str, l->len + 1);
+				emit(l, tok);
+			}
 			return lexSexp;
 		}
 	}
@@ -176,41 +152,58 @@ static void *lexIdent (Lexer *l) {
 }
 
 static void *lexOperator (Lexer *l) {
-	debug("lexing operator");
 	char c;
 	while ((c = next(l)) != EOF) {
-		// eat whitespace
+		/* eat whitespace */
 		if (!iswhitespace(c)) {
 			backup(l);
-			emit(l, BASWHITESPACE);
+			dump(l);
 			break;
 		}
 	}
-	// test first character
+	/* test first character */
 	if (isletter(c = next(l)) || issymbol(c)) {
-		// test following characters
+		/* test following characters */
 		while ((c = next(l)) != EOF) {
-			// eat identifier or symbol
+			/* eat identifier or symbol */
 			if ((!isletter(c) && !isdigit(c)) && !issymbol(c)) {
-				break;
+				backup(l);
+				if (l->len < 1){
+					errorf(l, "list lacks operator");
+					dump(l);
+				}
+				if (!iswhitespace(c)) {
+					errorf(l, "unknown character in op '%c'", c);
+					dump(l);
+				} else {
+					Obj *tok = malloc(sizeof (Obj));
+					tok->type = BASOPERATOR;
+					tok->name = calloc(l->len + 1, sizeof (char));
+					strlcpy(tok->name, l->str, l->len + 1);
+					emit(l, tok);
+				}
+				return lexSexp;
 			}
 		}
-	} 
-	if (c == EOF){return NULL;}
-	if (l->len < 2){errorf(l, "list lacks operator");}
-	else if (!iswhitespace(c)){errorf(l, "operator not followed by whitespace.");}
-	backup(l);
-	emit(l, BASOPERATOR);
-	return lexSexp;
+	} else {
+		backup(l);
+		errorf(l, "list lacks operator");
+		dump(l);
+		return lexSexp;
+	}
+	return NULL;
 }
 
 static void *lexString (Lexer *l) {
-	debug("lexing string");
 	char c;
 	while ((c = next(l)) != EOF) {
-		// eat string
+		/* eat string */
 		if (c == '"') {
-			emit(l, BASSTRING);
+			Obj *tok = malloc(sizeof (Obj));
+			tok->type = BASSTRING;
+			tok->str = calloc(l->len, sizeof (char));
+			strlcpy(tok->str, l->str, l->len);
+			emit(l, tok);
 			return lexSexp;
 		}
 	}
@@ -218,47 +211,55 @@ static void *lexString (Lexer *l) {
 }
 
 static void *lexChar (Lexer *l) {
-	debug("lexing string");
 	char c;
-	int i = 0;
-	while ((c = next(l)) != EOF) {
-		// eat char
-		i++;
-		if (c == '\'') {
-			if (i > 2){errorf(l, "character too long");}
-			emit(l, BASCHAR);
-			return lexSexp;
+	c = next(l);
+	if (next(l) == '\'') {
+		Obj *tok = malloc(sizeof (Obj));
+		tok->type = BASCHAR;
+		tok->c = c;
+		emit(l, tok);
+	} else {
+		errorf(l, "character too long");
+		while((c = next(l)) != '\'' && c != EOF){
+			/* eat exessive chars */
 		}
+		dump(l);
 	}
-	return NULL;
+	return lexSexp;
 }
 
 static void *lexNumber (Lexer *l) {
-	debug("lexing number");
 	char c;
 	if ((c = next(l)) == '0') {
-		// octal or hexadecimal
+		/* octal or hexadecimal */
 		if ((c = next(l)) == 'x' || c == 'X') {
-			return lexHexadecimalNumber; // hexadecimal
+			return lexHexadecimalNumber; /* hexadecimal */
 		} else {
-			if (c == EOF){return NULL;} // eof check
+			if (c == EOF){return NULL;} /* eof check */
 			backup(l);
-			return lexOctalNumber; // octal
+			return lexOctalNumber; /* octal */
 		}
 	} else {
-		if (c == EOF){return NULL;} // eof check
-		return lexDecimalNumber; // decimal
+		if (c == EOF){return NULL;} /* eof check */
+		return lexDecimalNumber; /* decimal */
 	}
 }
 
 static void *lexOctalNumber (Lexer *l) {
-	debug("lexing octal");
-	char c;
+	char c; dump(l);
 	while ((c = next(l)) != EOF) {
 		if (c < '0' || c > '7') {
-			// not octal
+			/* not octal */
 			backup(l);
-			emit(l, BASOCTNUM);
+			/* convert octal to number */
+			long int n = strtol(l->str, NULL, 8);
+			if (n > INT_MAX){errorf(l, "%d is too big", n); dump(l);}
+			else {
+				Obj *tok = malloc(sizeof (Obj));
+				tok->type = BASNUM;
+				tok->n = n;
+				emit(l, tok);
+			}
 			return lexSexp;
 		}
 	}
@@ -266,12 +267,19 @@ static void *lexOctalNumber (Lexer *l) {
 }
 
 static void *lexDecimalNumber (Lexer *l) {
-	debug("lexing decimal");
 	char c;
 	while ((c = next(l)) != EOF) {
 		if (c < '0' || c > '9') {
 			backup(l);
-			emit(l, BASDECNUM);
+			/* convert octal to number */
+			long int n = strtol(l->str, NULL, 10);
+			if (n > INT_MAX){errorf(l, "%d is too big", n); dump(l);}
+			else {
+				Obj *tok = malloc(sizeof (Obj));
+				tok->type = BASNUM;
+				tok->n = n;
+				emit(l, tok);
+			}
 			return lexSexp;
 		}
 	}
@@ -279,12 +287,19 @@ static void *lexDecimalNumber (Lexer *l) {
 }
 
 static void *lexHexadecimalNumber (Lexer *l) {
-	debug("lexing hexadecimal");
-	char c;
+	char c; dump(l);
 	while ((c = next(l)) != EOF) {
 		if ((c < '0' || c > '9') && (c < 'A' || c > 'F')) {
 			backup(l);
-			emit(l, BASHEXNUM);
+			/* convert octal to number */
+			long int n = strtol(l->str, NULL, 16);
+			if (n > INT_MAX){errorf(l, "%d is too big", n); dump(l);}
+			else {
+				Obj *tok = malloc(sizeof (Obj));
+				tok->type = BASNUM;
+				tok->n = n;
+				emit(l, tok);
+			}
 			return lexSexp;
 		}
 	}
@@ -292,29 +307,34 @@ static void *lexHexadecimalNumber (Lexer *l) {
 }
 
 static void *lexComment (Lexer *l) {
-	debug("lexing comment");
 	char c;
 	while ((c = next(l)) != EOF) {
 		if (c == '\n') {
-			backup(l); // newline counts as whitespace
-			emit(l, BASCOMMENT); // dump comment
+			backup(l); /* newline counts as whitespace */
+			dump(l);
 			return lexProgram;
 		}
 	}
 	return NULL;
 }
 
-int lex (error err) {
-	Lexer l;
-	l.error = err;
-	l.str = calloc(100, sizeof(char));
-	l.max = 100;
-	l.len = 0;
-	l.parenDepth = 0;
-	l.charNum = 0; l.lineNum = 1;
-	l.in = stdin;
+void *initLexer(FILE *in, stack *stack, errorHandler err) {
+	Lexer *l = malloc(sizeof (Lexer));
+	l->error = err;
+	l->str = calloc(100, sizeof (char));
+	l->max = 100;
+	l->len = 0;
+	l->parenDepth = 0;
+	l->charNum = 0; l->lineNum = 1;
+	l->in = in;
+	l->tok = stack;
+	return l;
+}
+
+/* lexes a statement */
+int lexStatement (Lexer *l) {
 	for (void *state = (void *) lexProgram; state != NULL;) {
-		state = ((lexFunc) state)(&l);
+		state = ((lexFunc) state)(l);
 	}
 	return 0;
 }

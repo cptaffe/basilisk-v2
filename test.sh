@@ -2,4 +2,4 @@
 
 # Testing for Basilisk
 
-./basilisk <tests/types.lsp
+./basilisk tests/types.lsp
